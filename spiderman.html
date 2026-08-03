@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>🕷️ Spider-Man: Web Swinger</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #0a0a0a;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        canvas {
+            display: block;
+            cursor: crosshair;
+        }
+
+        #ui {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            font-size: 18px;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 16px 32px;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            z-index: 100;
+            pointer-events: none;
+            user-select: none;
+        }
+
+        #ui h1 {
+            font-size: 28px;
+            background: linear-gradient(135deg, #EF4444, #DC2626);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 4px;
+        }
+
+        #ui span {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        #controls {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 14px;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 12px 24px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            z-index: 100;
+            pointer-events: none;
+            user-select: none;
+        }
+
+        #controls kbd {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2px 10px;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.7);
+            margin: 0 2px;
+        }
+
+        #stats {
+            position: fixed;
+            top: 100px;
+            right: 20px;
+            color: rgba(255, 255, 255, 0.4);
+            font-size: 12px;
+            text-align: right;
+            font-family: monospace;
+            z-index: 100;
+            pointer-events: none;
+            user-select: none;
+            line-height: 1.6;
+        }
+
+        @media (max-width: 768px) {
+            #ui h1 {
+                font-size: 20px;
+            }
+            #ui span {
+                font-size: 12px;
+            }
+            #controls {
+                font-size: 11px;
+                padding: 8px 16px;
+                bottom: 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <h1>🕷️ SPIDER-MAN: WEB SWINGER</h1>
+        <span>Click on buildings to swing · Hold & Drag for power</span>
+    </div>
+
+    <div id="controls">
+        <kbd>Click</kbd> on building to shoot web &nbsp;·&nbsp; <kbd>Drag</kbd> to control swing &nbsp;·&nbsp; <kbd>Space</kbd> to release
+    </div>
+
+    <div id="stats">
+        <div id="fps">FPS: 60</div>
+        <div id="speed">Speed: 0 km/h</div>
+        <div id="height">Height: 0m</div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        // ============================================================
+        // 🕷️ SPIDER-MAN WEB SWINGING SIMULATOR
+        // Physics-based pendulum system with building collision
+        // ============================================================
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // ---------- RESIZE ----------
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // ---------- BUILDINGS ----------
+        const buildings = [];
+        const BUILDING_COUNT = 35;
+
+        function generateBuildings() {
+            const w = canvas.width;
+            const h = canvas.height;
+
+            // Generate random skyline
+            for (let i = 0; i < BUILDING_COUNT; i++) {
+                const x = Math.random() * w;
+                const width = 30 + Math.random() * 70;
+                const height = 60 + Math.random() * 350;
+                const y = h - height - 30 - Math.random() * 40;
+                buildings.push({
+                    x,
+                    y,
+                    width,
+                    height,
+                    color: `hsl(${200 + Math.random() * 40}, ${30 + Math.random() * 40}%, ${20 + Math.random() * 30}%)`,
+                    windows: Math.floor(Math.random() * 30) + 10,
+                    hasLight: Math.random() > 0.5
+                });
+            }
+
+            // Sort by x for rendering
+            buildings.sort((a, b) => a.x - b.x);
+        }
+        generateBuildings();
+
+        // ---------- SPIDER-MAN ----------
+        const spiderman = {
+            x: canvas.width / 2,
+            y: canvas.height - 200,
+            radius: 14,
+            vx: 0,
+            vy: 0,
+            speed: 0,
+            isSwinging: false,
+            anchorX: 0,
+            anchorY: 0,
+            swingAngle: 0,
+            swingLength: 0,
+            webLength: 0,
+            targetX: 0,
+            targetY: 0,
+            isDragging: false,
+            dragStartX: 0,
+            dragStartY: 0,
+            facing: 1, // 1 = right, -1 = left
+            webColor: 'rgba(255, 255, 255, 0.8)',
+            webWidth: 2,
+            trail: [],
+            maxTrail: 20,
+            // Spider-Man suit colors
+            suitPrimary: '#EF4444',
+            suitSecondary: '#1E3A8A',
+            suitWeb: '#333333'
+        };
+
+        // ---------- GRAVITY & PHYSICS ----------
+        const GRAVITY = 0.6;
+        const AIR_RESISTANCE = 0.999;
+        const MAX_SPEED = 25;
+        const SWING_POWER = 0.08;
+        const RELEASE_SPEED_MULTIPLIER = 1.2;
+
+        // ---------- MOUSE / TOUCH CONTROLS ----------
+        let mouseX = 0,
+            mouseY = 0;
+        let isMouseDown = false;
+        let isPointerDown = false;
+
+        // ---------- KEYS ----------
+        const keys = {};
+
+        // ---------- EVENT LISTENERS ----------
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+            isMouseDown = true;
+            handlePointerDown(mouseX, mouseY);
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+            if (isMouseDown) {
+                handlePointerMove(mouseX, mouseY);
+            }
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            isMouseDown = false;
+            handlePointerUp();
+        });
+
+        // Touch support
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            mouseX = touch.clientX - rect.left;
+            mouseY = touch.clientY - rect.top;
+            isPointerDown = true;
+            handlePointerDown(mouseX, mouseY);
+        }, { passive: false });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            mouseX = touch.clientX - rect.left;
+            mouseY = touch.clientY - rect.top;
+            if (isPointerDown) {
+                handlePointerMove(mouseX, mouseY);
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            isPointerDown = false;
+            handlePointerUp();
+        }, { passive: false });
+
+        // Keyboard
+        document.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            if (e.key === ' ' || e.key === 'Space') {
+                e.preventDefault();
+                releaseWeb();
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        // ---------- GAME LOGIC ----------
+
+        function handlePointerDown(x, y) {
+            // Check if clicked on a building
+            const building = getBuildingAt(x, y);
+            if (building) {
+                // Attach web to building
+                attachWeb(x, y);
+                spiderman.isDragging = false;
+            } else {
+                // Start drag for power swing
+                spiderman.isDragging = true;
+                spiderman.dragStartX = x;
+                spiderman.dragStartY = y;
+                // If already swinging, release first
+                if (spiderman.isSwinging) {
+                    releaseWeb();
+                }
+            }
+        }
+
+        function handlePointerMove(x, y) {
+            if (spiderman.isDragging) {
+                // Update drag position (for visual feedback)
+                spiderman.dragStartX = x;
+                spiderman.dragStartY = y;
+            }
+        }
+
+        function handlePointerUp() {
+            if (spiderman.isDragging) {
+                // Calculate drag direction and power
+                const dx = spiderman.dragStartX - spiderman.x;
+                const dy = spiderman.dragStartY - spiderman.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist > 30) {
+                    // Launch Spider-Man in the opposite direction of the drag
+                    const power = Math.min(dist / 5, 20);
+                    const angle = Math.atan2(dy, dx);
+                    spiderman.vx = Math.cos(angle) * power;
+                    spiderman.vy = Math.sin(angle) * power;
+                }
+                spiderman.isDragging = false;
+            }
+        }
+
+        function getBuildingAt(x, y) {
+            // Check if point is inside any building
+            for (const b of buildings) {
+                if (x >= b.x && x <= b.x + b.width &&
+                    y >= b.y && y <= b.y + b.height) {
+                    return b;
+                }
+            }
+            return null;
+        }
+
+        function attachWeb(x, y) {
+            spiderman.anchorX = x;
+            spiderman.anchorY = y;
+            spiderman.isSwinging = true;
+            spiderman.webLength = Math.sqrt(
+                (x - spiderman.x) ** 2 + (y - spiderman.y) ** 2
+            );
+            spiderman.swingAngle = Math.atan2(y - spiderman.y, x - spiderman.x);
+            spiderman.targetX = x;
+            spiderman.targetY = y;
+            spiderman.trail = [];
+        }
+
+        function releaseWeb() {
+            if (spiderman.isSwinging) {
+                // Release with momentum
+                const speed = Math.sqrt(spiderman.vx ** 2 + spiderman.vy ** 2);
+                if (speed < 2) {
+                    spiderman.vx *= 1.5;
+                    spiderman.vy *= 1.5;
+                }
+                spiderman.isSwinging = false;
+                spiderman.webLength = 0;
+                spiderman.trail = [];
+            }
+        }
+
+        function updatePhysics() {
+            const G = 0.4; // Gravity
+            const AIR_RESIST = 0.9995;
+            const MAX_SPEED = 30;
+
+            if (spiderman.isSwinging) {
+                // ------ PENDULUM PHYSICS ------
+                const dx = spiderman.x - spiderman.anchorX;
+                const dy = spiderman.y - spiderman.anchorY;
+                const currentLength = Math.sqrt(dx * dx + dy * dy);
+
+                if (currentLength > 0) {
+                    // Calculate pendulum forces
+                    const tension = G * Math.cos(Math.atan2(dy, dx));
+                    const gravityForce = G;
+
+                    // Angular acceleration
+                    const angle = Math.atan2(dy, dx);
+                    const angularAccel = -(G / currentLength) * Math.sin(angle);
+
+                    // Update velocity with pendulum physics
+                    spiderman.vx += -Math.sin(angle) * angularAccel * currentLength * 0.02;
+                    spiderman.vy += Math.cos(angle) * angularAccel * currentLength * 0.02;
+
+                    // Add gravity
+                    spiderman.vy += gravityForce;
+
+                    // Constrain to web length
+                    const newDx = spiderman.x - spiderman.anchorX;
+                    const newDy = spiderman.y - spiderman.anchorY;
+                    const newLength = Math.sqrt(newDx * newDx + newDy * newDy);
+
+                    if (newLength > spiderman.webLength) {
+                        const ratio = spiderman.webLength / newLength;
+                        spiderman.x = spiderman.anchorX + newDx * ratio;
+                        spiderman.y = spiderman.anchorY + newDy * ratio;
+                    }
+
+                    // Add swing power from mouse drag (if dragging)
+                    if (spiderman.isDragging) {
+                        const dragDx = spiderman.dragStartX - spiderman.x;
+                        const dragDy = spiderman.dragStartY - spiderman.y;
+                        const dragDist = Math.sqrt(dragDx * dragDx + dragDy * dragDy);
+                        if (dragDist > 10) {
+                            const power = Math.min(dragDist / 100, 3);
+                            spiderman.vx += (dragDx / dragDist) * power;
+                            spiderman.vy += (dragDy / dragDist) * power;
+                        }
+                    }
+
+                    // Air resistance
+                    spiderman.vx *= AIR_RESIST;
+                    spiderman.vy *= AIR_RESIST;
+
+                    // Speed limit
+                    const speed = Math.sqrt(spiderman.vx ** 2 + spiderman.vy ** 2);
+                    if (speed > MAX_SPEED) {
+                        spiderman.vx = (spiderman.vx / speed) * MAX_SPEED;
+                        spiderman.vy = (spiderman.vy / speed) * MAX_SPEED;
+                    }
+
+                    // Update position
+                    spiderman.x += spiderman.vx;
+                    spiderman.y += spiderman.vy;
+
+                    // Update facing direction
+                    if (spiderman.vx > 0.5) spiderman.facing = 1;
+                    else if (spiderman.vx < -0.5) spiderman.facing = -1;
+
+                    // Add trail
+                    spiderman.trail.push({ x: spiderman.x, y: spiderman.y });
+                    if (spiderman.trail.length > spiderman.maxTrail) {
+                        spiderman.trail.shift();
+                    }
+                }
+
+            } else {
+                // ------ FREE FALL ------
+                spiderman.vy += GRAVITY;
+                spiderman.vx *= AIR_RESISTANCE;
+                spiderman.vy *= AIR_RESISTANCE;
+
+                // Speed limit
+                const speed = Math.sqrt(spiderman.vx ** 2 + spiderman.vy ** 2);
+                if (speed > MAX_SPEED) {
+                    spiderman.vx = (spiderman.vx / speed) * MAX_SPEED;
+                    spiderman.vy = (spiderman.vy / speed) * MAX_SPEED;
+                }
+
+                spiderman.x += spiderman.vx;
+                spiderman.y += spiderman.vy;
+
+                if (spiderman.vx > 0.5) spiderman.facing = 1;
+                else if (spiderman.vx < -0.5) spiderman.facing = -1;
+
+                // Clear trail when not swinging
+                if (spiderman.trail.length > 0 && !spiderman.isSwinging) {
+                    spiderman.trail = [];
+                }
+            }
+
+            // ------ GROUND COLLISION ------
+            const groundY = canvas.height - 30;
+            if (spiderman.y + spiderman.radius > groundY) {
+                spiderman.y = groundY - spiderman.radius;
+                spiderman.vy = -spiderman.vy * 0.3; // Bounce
+                spiderman.vx *= 0.95; // Friction
+                if (Math.abs(spiderman.vy) < 0.5) spiderman.vy = 0;
+                if (spiderman.isSwinging) {
+                    releaseWeb();
+                }
+            }
+
+            // ------ WALL COLLISION ------
+            if (spiderman.x - spiderman.radius < 0) {
+                spiderman.x = spiderman.radius;
+                spiderman.vx = Math.abs(spiderman.vx) * 0.5;
+            }
+            if (spiderman.x + spiderman.radius > canvas.width) {
+                spiderman.x = canvas.width - spiderman.radius;
+                spiderman.vx = -Math.abs(spiderman.vx) * 0.5;
+            }
+            if (spiderman.y - spiderman.radius < 0) {
+                spiderman.y = spiderman.radius;
+                spiderman.vy = Math.abs(spiderman.vy) * 0.5;
+            }
+
+            // ------ BUILDING COLLISION ------
+            for (const b of buildings) {
+                // Simple circle-rect collision
+                const cx = spiderman.x;
+                const cy = spiderman.y;
+                const r = spiderman.radius;
+
+                const closestX = Math.max(b.x, Math.min(cx, b.x + b.width));
+                const closestY = Math.max(b.y, Math.min(cy, b.y + b.height));
+                const distX = cx - closestX;
+                const distY = cy - closestY;
+                const dist = Math.sqrt(distX * distX + distY * distY);
+
+                if (dist < r) {
+                    // Push out
+                    const angle = Math.atan2(distY, distX);
+                    const overlap = r - dist;
+                    spiderman.x += Math.cos(angle) * overlap;
+                    spiderman.y += Math.sin(angle) * overlap;
+
+                    // Reflect velocity
+                    const normalX = distX / (dist + 0.001);
+                    const normalY = distY / (dist + 0.001);
+                    const dot = spiderman.vx * normalX + spiderman.vy * normalY;
+                    if (dot < 0) {
+                        spiderman.vx -= 2 * dot * normalX * 0.5;
+                        spiderman.vy -= 2 * dot * normalY * 0.5;
+                    }
+
+                    // If swinging and hit building, release web
+                    if (spiderman.isSwinging) {
+                        releaseWeb();
+                    }
+                }
+            }
+
+            // Update speed display
+            spiderman.speed = Math.sqrt(spiderman.vx ** 2 + spiderman.vy ** 2);
+        }
+
+        // ---------- RENDERING ----------
+        function drawBuildings() {
+            for (const b of buildings) {
+                ctx.fillStyle = b.color;
+                ctx.fillRect(b.x, b.y, b.width, b.height);
+
+                // Windows (for realism)
+                ctx.fillStyle = 'rgba(255, 215, 0, 0.05)';
+                const cols = Math.floor(b.width / 15);
+                const rows = Math.floor(b.height / 20);
+                for (let r = 0; r < rows && r < 10; r++) {
+                    for (let c = 0; c < cols && c < 6; c++) {
+                        if (Math.random() > 0.3 || b.hasLight) {
+                            const wX = b.x + 4 + c * 12;
+                            const wY = b.y + 6 + r * 18;
+                            ctx.fillStyle = Math.random() > 0.6 ? 'rgba(255, 215, 0, 0.3)' : 'rgba(200, 200, 255, 0.08)';
+                            ctx.fillRect(wX, wY, 6, 8);
+                        }
+                    }
+                }
+
+                // Building outline
+                ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(b.x, b.y, b.width, b.height);
+            }
+        }
+
+        function drawWeb() {
+            if (spiderman.isSwinging) {
+                // Web line
+                const gradient = ctx.createLinearGradient(
+                    spiderman.x, spiderman.y,
+                    spiderman.anchorX, spiderman.anchorY
+                );
+                gradient.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+                gradient.addColorStop(0.5, 'rgba(200, 200, 255, 0.4)');
+                gradient.addColorStop(1, 'rgba(255, 255, 255, 0.2)');
+
+                ctx.beginPath();
+                ctx.moveTo(spiderman.x, spiderman.y);
+                ctx.lineTo(spiderman.anchorX, spiderman.anchorY);
+                ctx.strokeStyle = gradient;
+                ctx.lineWidth = 2.5;
+                ctx.shadowColor = 'rgba(255, 255, 255, 0.2)';
+                ctx.shadowBlur = 10;
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+
+                // Web anchor glow
+                ctx.beginPath();
+                ctx.arc(spiderman.anchorX, spiderman.anchorY, 6, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.fill();
+                ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
+                ctx.shadowBlur = 20;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        function drawTrail() {
+            if (spiderman.trail.length > 1) {
+                for (let i = 1; i < spiderman.trail.length; i++) {
+                    const alpha = i / spiderman.trail.length * 0.4;
+                    ctx.beginPath();
+                    ctx.arc(spiderman.trail[i].x, spiderman.trail[i].y, 3 * (i / spiderman.trail.length), 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+                    ctx.fill();
+                }
+            }
+        }
+
+        function drawSpiderMan() {
+            const x = spiderman.x;
+            const y = spiderman.y;
+            const f = spiderman.facing;
+
+            // Shadow
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+            ctx.shadowBlur = 20;
+
+            // ----- BODY -----
+            // Torso
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+
+            // Red suit body
+            ctx.beginPath();
+            ctx.ellipse(x, y + 2, 12, 16, 0, 0, Math.PI * 2);
+            ctx.fillStyle = '#EF4444';
+            ctx.fill();
+            ctx.strokeStyle = '#1E3A8A';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // Blue suit (legs/hips)
+            ctx.beginPath();
+            ctx.ellipse(x, y + 12, 10, 8, 0, 0, Math.PI * 2);
+            ctx.fillStyle = '#1E3A8A';
+            ctx.fill();
+
+            // ----- HEAD -----
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
+
+            // Head (red)
+            ctx.beginPath();
+            ctx.ellipse(x, y - 12, 9, 10, 0, 0, Math.PI * 2);
+            ctx.fillStyle = '#EF4444';
+            ctx.fill();
+            ctx.strokeStyle = '#1E3A8A';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // Eyes (white)
+            ctx.shadowBlur = 0;
+            const eyeOffset = f * 4;
+            // Left eye
+            ctx.beginPath();
+            ctx.ellipse(x - 5 + eyeOffset * 0.5, y - 14, 4, 5, 0.2, 0, Math.PI * 2);
+            ctx.fillStyle = 'white';
+            ctx.fill();
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            // Right eye
+            ctx.beginPath();
+            ctx.ellipse(x + 5 + eyeOffset * 0.5, y - 14, 4, 5, -0.2, 0, Math.PI * 2);
+            ctx.fillStyle = 'white';
+            ctx.fill();
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            // Eye lenses (black)
+            ctx.fillStyle = '#1a1a2e';
+            ctx.beginPath();
+            ctx.ellipse(x - 4 + eyeOffset * 0.5, y - 13, 2, 3, 0.2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.ellipse(x + 4 + eyeOffset * 0.5, y - 13, 2, 3, -0.2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // ----- WEB PATTERN (chest) -----
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+            ctx.lineWidth = 0.8;
+
+            // Spider emblem (simple)
+            const spiderCenterX = x;
+            const spiderCenterY = y + 2;
+
+            // Body
+            ctx.beginPath();
+            ctx.ellipse(spiderCenterX, spiderCenterY, 3, 4, 0, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(0,0,0,0.3)';
+            ctx.fill();
+
+            // Legs (4 on each side)
+            for (let side = -1; side <= 1; side += 2) {
+                for (let leg = 0; leg < 4; leg++) {
+                    const angle = -0.8 + leg * 0.4;
+                    const legLen = 4 + leg * 1.5;
+                    ctx.beginPath();
+                    ctx.moveTo(spiderCenterX + side * 3, spiderCenterY - 2 + leg * 1.5);
+                    ctx.lineTo(
+                        spiderCenterX + side * (3 + legLen * 0.7),
+                        spiderCenterY - 4 + leg * 2.5
+                    );
+                    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+                    ctx.lineWidth = 0.8;
+                    ctx.stroke();
+                }
+            }
+
+            // ----- WEB SHOOTER (wrist) -----
+            ctx.shadowBlur = 0;
+            const wristX = x + f * 12;
+            const wristY = y + 4;
+            ctx.beginPath();
+            ctx.arc(wristX, wristY, 3, 0, Math.PI * 2);
+            ctx.fillStyle = '#C0C0C0';
+            ctx.fill();
+            ctx.strokeStyle = '#666';
+            ctx.lineWidth = 0.5;
+            ctx.stroke();
+
+            // Web shooter glow when swinging
+            if (spiderman.isSwinging) {
+                ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
+                ctx.shadowBlur = 20;
+                ctx.beginPath();
+                ctx.arc(wristX, wristY, 4, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+
+            ctx.shadowBlur = 0;
+        }
+
+        function drawDragIndicator() {
+            if (spiderman.isDragging) {
+                const dx = spiderman.dragStartX - spiderman.x;
+                const dy = spiderman.dragStartY - spiderman.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist > 10) {
+                    // Line from Spider-Man to drag point
+                    ctx.beginPath();
+                    ctx.moveTo(spiderman.x, spiderman.y);
+                    ctx.lineTo(spiderman.dragStartX, spiderman.dragStartY);
+                    ctx.strokeStyle = `rgba(255, 255, 255, ${Math.min(dist / 100, 0.4)})`;
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([6, 8]);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    // Drag circle
+                    const power = Math.min(dist / 5, 20);
+                    const radius = 10 + power;
+
+                    ctx.beginPath();
+                    ctx.arc(spiderman.dragStartX, spiderman.dragStartY, radius, 0, Math.PI * 2);
+                    ctx.strokeStyle = `rgba(255, 215, 0, ${Math.min(dist / 150, 0.5)})`;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // Arrow direction
+                    const angle = Math.atan2(dy, dx);
+                    const arrowLen = 20 + power * 0.5;
+                    ctx.beginPath();
+                    ctx.moveTo(spiderman.dragStartX, spiderman.dragStartY);
+                    ctx.lineTo(
+                        spiderman.dragStartX + Math.cos(angle) * arrowLen,
+                        spiderman.dragStartY + Math.sin(angle) * arrowLen
+                    );
+                    ctx.strokeStyle = `rgba(255, 215, 0, ${Math.min(dist / 150, 0.6)})`;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // Arrow head
+                    const headLen = 12;
+                    ctx.beginPath();
+                    ctx.moveTo(
+                        spiderman.dragStartX + Math.cos(angle) * arrowLen,
+                        spiderman.dragStartY + Math.sin(angle) * arrowLen
+                    );
+                    ctx.lineTo(
+                        spiderman.dragStartX + Math.cos(angle - 0.5) * (arrowLen - headLen),
+                        spiderman.dragStartY + Math.sin(angle - 0.5) * (arrowLen - headLen)
+                    );
+                    ctx.lineTo(
+                        spiderman.dragStartX + Math.cos(angle + 0.5) * (arrowLen - headLen),
+                        spiderman.dragStartY + Math.sin(angle + 0.5) * (arrowLen - headLen)
+                    );
+                    ctx.closePath();
+                    ctx.fillStyle = `rgba(255, 215, 0, ${Math.min(dist / 150, 0.4)})`;
+                    ctx.fill();
+                }
+            }
+        }
+
+        function drawUIOverlay() {
+            // Speed indicator
+            const speed = spiderman.speed;
+            const speedKmh = Math.round(speed * 4);
+            document.getElementById('speed').textContent = `Speed: ${speedKmh} km/h`;
+
+            // Height from ground
+            const height = Math.round((canvas.height - 30 - spiderman.y) / 5);
+            document.getElementById('height').textContent = `Height: ${Math.max(0, height)}m`;
+
+            // FPS is updated in game loop
+        }
+
+        // ---------- GAME LOOP ----------
+        let frameCount = 0;
+        let lastFpsUpdate = Date.now();
+
+        function gameLoop() {
+            // Update
+            updatePhysics();
+
+            // Clear
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Background gradient (skyline)
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, '#0a0e1a');
+            gradient.addColorStop(0.4, '#1a1a2e');
+            gradient.addColorStop(0.7, '#16213e');
+            gradient.addColorStop(1, '#0f3460');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Stars
+            ctx.fillStyle = 'rgba(255,255,255,0.1)';
+            for (let i = 0; i < 100; i++) {
+                const sx = (i * 137.5) % canvas.width;
+                const sy = (i * 97.3) % (canvas.height * 0.5);
+                const size = 0.5 + (i % 3) * 0.5;
+                ctx.beginPath();
+                ctx.arc(sx, sy, size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Moon
+            ctx.shadowColor = 'rgba(255, 255, 255, 0.05)';
+            ctx.shadowBlur = 50;
+            ctx.beginPath();
+            ctx.arc(canvas.width * 0.85, 60, 35, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // Buildings
+            drawBuildings();
+
+            // Web
+            drawWeb();
+
+            // Trail
+            drawTrail();
+
+            // Drag indicator
+            drawDragIndicator();
+
+            // Spider-Man
+            drawSpiderMan();
+
+            // Ground
+            ctx.fillStyle = 'rgba(20, 30, 50, 0.5)';
+            ctx.fillRect(0, canvas.height - 30, canvas.width, 30);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.02)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height - 30);
+            ctx.lineTo(canvas.width, canvas.height - 30);
+            ctx.stroke();
+
+            // UI
+            drawUIOverlay();
+
+            // FPS
+            frameCount++;
+            if (Date.now() - lastFpsUpdate > 1000) {
+                document.getElementById('fps').textContent = `FPS: ${frameCount}`;
+                frameCount = 0;
+                lastFpsUpdate = Date.now();
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // ---------- RESPONSIVE RE-GENERATE ----------
+        window.addEventListener('resize', () => {
+            resize();
+            // Keep Spider-Man in bounds
+            if (spiderman.x > canvas.width) spiderman.x = canvas.width - 20;
+            if (spiderman.y > canvas.height) spiderman.y = canvas.height - 50;
+            // Regenerate buildings if needed (optional)
+            // generateBuildings();
+        });
+
+        // ---------- START ----------
+        gameLoop();
+
+        // ---------- TIPS ----------
+        console.log('🕷️ SPIDER-MAN: WEB SWINGER');
+        console.log('🎮 Click on buildings to shoot web');
+        console.log('🔄 Drag to build swing power');
+        console.log('🚀 Release to fly!');
+        console.log('⌨️ Space to release web');
+
+        // ---------- RESET POSITION (double click) ----------
+        canvas.addEventListener('dblclick', () => {
+            spiderman.x = canvas.width / 2;
+            spiderman.y = canvas.height - 200;
+            spiderman.vx = 0;
+            spiderman.vy = 0;
+            spiderman.isSwinging = false;
+            spiderman.trail = [];
+            spiderman.isDragging = false;
+        });
+
+        console.log('🔄 Double-click to reset position');
+    </script>
+</body>
+</html>
